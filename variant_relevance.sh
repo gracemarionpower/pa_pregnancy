@@ -14,11 +14,15 @@
 
 set -euo pipefail
 
-cd /user/work/sd20930/project_pa_mrpreg/variant_relevance
+# ---- go to analysis directory (important for relative paths) ----
+cd /user/work/sd20930/project_pa_mrpreg/pa_pregnancy/variant_relevance
 
+# ---- create dirs ----
 mkdir -p logs/alltraits_allchr results/per_chr
 
+# ---- paths ----
 PLINK2="/user/work/sd20930/project_pa_mrpreg/plink2"
+
 BGEN_DIR="/group/alspac/gi_1000g_g0m_g1/released/2015-10-30/data/dosage_bgen"
 SAMPLE="/group/alspac/gi_1000g_g0m_g1/released/2015-10-30/data/data.sample"
 
@@ -28,7 +32,7 @@ COVAR="inputs/covar_age_pcs.txt"
 
 OUTDIR="results/per_chr"
 
-# chr01..chr22
+# ---- run all traits x chr01..chr22 ----
 for CHR in $(seq -w 1 22); do
   BGEN="${BGEN_DIR}/data_chr${CHR}.bgen"
 
@@ -46,8 +50,9 @@ for CHR in $(seq -w 1 22); do
       --covar "${COVAR}" \
       --covar-col-nums 3-13 \
       --covar-variance-standardize \
-      --glm linear hide-covar \
+      --glm hide-covar firth-fallback \
       --out "${OUTDIR}/gwas_${TRAIT}_chr${CHR}"
 
   done < "${TRAIT_LIST}"
 done
+
