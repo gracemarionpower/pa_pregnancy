@@ -9,18 +9,26 @@
 #SBATCH --time=10-00:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=grace.power@bristol.ac.uk
-#SBATCH --output=logs/alltraits_allchr/plink2_%j.out
-#SBATCH --error=logs/alltraits_allchr/plink2_%j.err
+#SBATCH --output=/user/work/sd20930/project_pa_mrpreg/variant_relevance/logs/alltraits_allchr/plink2_%j.out
+#SBATCH --error=/user/work/sd20930/project_pa_mrpreg/variant_relevance/logs/alltraits_allchr/plink2_%j.err
 
 set -euo pipefail
 
-# ---- go to analysis directory (important for relative paths) ----
-cd /user/work/sd20930/project_pa_mrpreg/pa_pregnancy/variant_relevance
+# -------------------------------
+# Move to project root safely
+# -------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT"
 
-# ---- create dirs ----
-mkdir -p logs/alltraits_allchr results/per_chr
+# -------------------------------
+# Create output directories
+# -------------------------------
+mkdir -p results/per_chr logs/alltraits_allchr
 
-# ---- paths ----
+# -------------------------------
+# Paths
+# -------------------------------
 PLINK2="/user/work/sd20930/project_pa_mrpreg/plink2"
 
 BGEN_DIR="/group/alspac/gi_1000g_g0m_g1/released/2015-10-30/data/dosage_bgen"
@@ -32,12 +40,15 @@ COVAR="inputs/covar_age_pcs.txt"
 
 OUTDIR="results/per_chr"
 
-# ---- run all traits x chr01..chr22 ----
+# -------------------------------
+# Run GWAS: all traits × chr01–22
+# -------------------------------
 for CHR in $(seq -w 1 22); do
   BGEN="${BGEN_DIR}/data_chr${CHR}.bgen"
 
   while read -r TRAIT; do
-    [[ -z "${TRAIT}" ]] && continue
+    [[ -z "$TRAIT" ]] && continue
+
     PHENO="${PHENO_DIR}/${TRAIT}.pheno.txt"
 
     echo "Running trait=${TRAIT} chr=${CHR}"
@@ -55,4 +66,3 @@ for CHR in $(seq -w 1 22); do
 
   done < "${TRAIT_LIST}"
 done
-
