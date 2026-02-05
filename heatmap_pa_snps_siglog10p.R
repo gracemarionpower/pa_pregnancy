@@ -3,6 +3,7 @@ suppressPackageStartupMessages({
   library(data.table)
   library(pheatmap)
 })
+install.packages("pheatmap", repos = "https://cloud.r-project.org")
 
 # -------- Set project root (robust) --------
 args <- commandArgs(trailingOnly = FALSE)
