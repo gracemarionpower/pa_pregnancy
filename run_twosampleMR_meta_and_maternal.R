@@ -14,7 +14,9 @@
 #
 # Notes
 #   - Exposure SE is reconstructed from beta and two-sided p-values where missing/0
-#   - I only write MR result tables; no plots or SNP-level outputs
+#   - Exposure alleles are restricted to A/C/G/T to avoid format_data() excluding everything
+#     (non-ACGT indel strings such as "TTTTG" are dropped at exposure stage)
+#   - I only write MR result tables; no plots
 #
 # Inputs
 #   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
@@ -23,8 +25,8 @@
 #   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/trios_out_dat.txt
 #
 # Outputs
-#   /projects/.../MR-PREG/results/mr_all/mr_ma_results.tsv
-#   /projects/.../MR-PREG/results/mr_all/mr_maternal_results.tsv
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr/mr_ma_results.tsv
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr/mr_maternal_results.tsv
 ################################################################################
 
 rm(list = ls())
@@ -36,43 +38,54 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------- Paths ------------------------------------------
-base_dir <- "/projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG"
+base_data <- "/projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG"
 
-exposure_file   <- file.path(base_dir, "exposures_pa.txt")
-ma_outcome_file <- file.path(base_dir, "ma_out_dat.txt")
-duos_file       <- file.path(base_dir, "duos_out_dat.txt")
-trios_file      <- file.path(base_dir, "trios_out_dat.txt")
+exposure_file   <- file.path(base_data, "exposures_pa.txt")
+ma_outcome_file <- file.path(base_data, "ma_out_dat.txt")
+duos_file       <- file.path(base_data, "duos_out_dat.txt")
+trios_file      <- file.path(base_data, "trios_out_dat.txt")
 
-outdir <- file.path(base_dir, "results", "mr_all")
+outdir <- "/projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr"
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
 # ----------------------------- Exposures --------------------------------------
-# One row per SNP per PA phenotype. SE is reconstructed from beta and pval if missing/0.
+# One row per SNP per PA phenotype.
+# SE is reconstructed from beta and pval if missing/0.
+# Exposure alleles are restricted to A/C/G/T to avoid format_data dropping all rows.
 exp_raw <- fread(exposure_file, data.table = FALSE)
 
-if (!"other_allele" %in% names(exp_raw)) exp_raw$other_allele <- NA_character_
+# Standardise expected columns
+# (Assumes your file uses: SNP, Phenotype, effect_allele, eaf, beta, pval, and optionally se)
+if (!"se" %in% names(exp_raw)) exp_raw$se <- NA_real_
 
 exp_raw <- exp_raw %>%
   mutate(
     SNP = as.character(SNP),
     Phenotype = as.character(Phenotype),
-    effect_allele = as.character(effect_allele),
-    other_allele = as.character(other_allele),
+    effect_allele = toupper(as.character(effect_allele)),
     beta = as.numeric(beta),
-    eaf = as.numeric(eaf),
+    eaf  = as.numeric(eaf),
     pval = as.numeric(pval),
-    se = suppressWarnings(as.numeric(se))
+    se   = suppressWarnings(as.numeric(se))
   )
 
+# Keep only standard single-base alleles for exposure coding
+exp_raw <- exp_raw %>% filter(effect_allele %in% c("A","C","G","T"))
+
+# Reconstruct SE where missing or unusable
 needs_se <- is.na(exp_raw$se) | exp_raw$se <= 0
 if (any(needs_se)) {
   z <- qnorm(1 - exp_raw$pval[needs_se] / 2)
   exp_raw$se[needs_se] <- abs(exp_raw$beta[needs_se] / z)
 }
 
+# Drop any rows still unusable
 exp_raw <- exp_raw %>%
   filter(!is.na(SNP), !is.na(Phenotype), !is.na(effect_allele),
          !is.na(beta), !is.na(se), !is.na(pval))
+
+# Provide blank other_allele for exposure; outcome alleles will be used at harmonisation
+exp_raw$other_allele <- NA_character_
 
 exp_dat <- format_data(
   exp_raw,
