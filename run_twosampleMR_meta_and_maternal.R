@@ -1,23 +1,30 @@
 ################################################################################
 # Grace Power
-# MR: all PA exposures x all outcomes
-# Runs:
-#   (A) Meta-analysis outcomes (ma_out_dat.txt)
-#   (B) Maternal effects (unadjusted) and maternal effects adjusted for fetal (mat_donuts)
-#       using duos_out_dat.txt + trios_out_dat.txt
+# Plain MR analyses: all PA exposures x all outcomes
 #
-# Methods (where possible):
+# What I run
+#   (A) MR of each PA exposure phenotype against each meta-analysis outcome (ma_out_dat.txt)
+#   (B) MR of each PA exposure phenotype against maternal outcome effects:
+#         - maternal_unadjusted (duos+trios): beta_mat
+#         - maternal_fetal_adjusted (duos only): beta_mat_donuts
+#         - maternal_fetal_paternal_adjusted (trios only): beta_mat_donuts
+#
+# Methods (where possible)
 #   IVW, MR-Egger, weighted median, weighted mode
 #
-# Inputs:
-#   data/exposures/exposures_pa.txt
-#   data/outcomes/ma_out_dat.txt
-#   data/outcomes/duos_out_dat.txt
-#   data/outcomes/trios_out_dat.txt
+# Notes
+#   - Exposure SE is reconstructed from beta and two-sided p-values where missing/0
+#   - I only write MR result tables; no plots or SNP-level outputs
 #
-# Outputs:
-#   results/mr_all/mr_ma_results.tsv
-#   results/mr_all/mr_maternal_results.tsv
+# Inputs
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/ma_out_dat.txt
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/duos_out_dat.txt
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/trios_out_dat.txt
+#
+# Outputs
+#   /projects/.../MR-PREG/results/mr_all/mr_ma_results.tsv
+#   /projects/.../MR-PREG/results/mr_all/mr_maternal_results.tsv
 ################################################################################
 
 rm(list = ls())
@@ -26,7 +33,6 @@ suppressPackageStartupMessages({
   library(TwoSampleMR)
   library(data.table)
   library(dplyr)
-  library(ggplot2)
 })
 
 # ----------------------------- Paths ------------------------------------------
@@ -39,11 +45,9 @@ trios_file      <- file.path(base_dir, "trios_out_dat.txt")
 
 outdir <- file.path(base_dir, "results", "mr_all")
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
-dir.create(file.path(outdir, "plots"), showWarnings = FALSE, recursive = TRUE)
 
 # ----------------------------- Exposures --------------------------------------
-# The exposure table is one row per SNP per PA phenotype.
-# SE is reconstructed from beta and pval if missing or if rounded to zero.
+# One row per SNP per PA phenotype. SE is reconstructed from beta and pval if missing/0.
 exp_raw <- fread(exposure_file, data.table = FALSE)
 
 if (!"other_allele" %in% names(exp_raw)) exp_raw$other_allele <- NA_character_
@@ -60,14 +64,12 @@ exp_raw <- exp_raw %>%
     se = suppressWarnings(as.numeric(se))
   )
 
-# Reconstruct SE where missing or unusable (e.g., 0.00 from rounding)
 needs_se <- is.na(exp_raw$se) | exp_raw$se <= 0
 if (any(needs_se)) {
   z <- qnorm(1 - exp_raw$pval[needs_se] / 2)
   exp_raw$se[needs_se] <- abs(exp_raw$beta[needs_se] / z)
 }
 
-# Drop any rows that still cannot be used
 exp_raw <- exp_raw %>%
   filter(!is.na(SNP), !is.na(Phenotype), !is.na(effect_allele),
          !is.na(beta), !is.na(se), !is.na(pval))
@@ -90,7 +92,7 @@ exp_list <- split(exp_dat, exp_dat$exposure)
 methods <- c("mr_ivw", "mr_egger_regression", "mr_weighted_median", "mr_weighted_mode")
 
 # ==============================================================================
-# (A) MR against meta-analysis outcomes (ma_out_dat.txt)
+# (A) Meta-analysis outcomes: ma_out_dat.txt
 # ==============================================================================
 
 ma_raw <- fread(ma_outcome_file, data.table = FALSE)
@@ -120,13 +122,7 @@ for (e_name in names(exp_list)) {
 
     dat_h <- harmonise_data(exp_list[[e_name]], ma_list[[o_name]], action = 2)
 
-    # If harmonisation returns an object without mr_keep (can happen when 0 SNPs survive
-    # or allele matching fails), skip this exposure–outcome pair cleanly
-    if (!"mr_keep" %in% names(dat_h)) {
-      message("Skipping (no mr_keep returned): ", e_name, " -> ", o_name)
-      next
-    }
-
+    if (!"mr_keep" %in% names(dat_h)) next
     dat_h <- dat_h %>% filter(mr_keep)
 
     nsnp <- length(unique(dat_h$SNP))
@@ -149,16 +145,6 @@ for (e_name in names(exp_list)) {
         UCI = exp(b + 1.96 * se)
       )
     k <- k + 1
-
-    if (nsnp >= 2) {
-      p <- mr_scatter_plot(res, dat_h)
-      ggsave(
-        filename = file.path(outdir, "plots",
-                             paste0("scatter_ma_", make.names(e_name), "_", make.names(o_name), ".png")),
-        plot = p[[1]],
-        width = 6.5, height = 5, dpi = 250
-      )
-    }
   }
 }
 
@@ -173,20 +159,22 @@ fwrite(
 )
 
 # ==============================================================================
-# (B) MR against maternal outcomes: unadjusted (mat) and fetal-adjusted (mat_donuts)
-#      using duos_out_dat.txt + trios_out_dat.txt
+# (B) Maternal outcomes: duos + trios
 # ==============================================================================
 
-duos_raw <- fread(duos_file, data.table = FALSE)
+duos_raw  <- fread(duos_file, data.table = FALSE)
 trios_raw <- fread(trios_file, data.table = FALSE)
 
-wlm_pool <- bind_rows(duos_raw, trios_raw)
-
 maternal_specs <- data.frame(
-  analysis = c("maternal_unadjusted", "maternal_fetal_adjusted"),
-  beta_col = c("beta_mat", "beta_mat_donuts"),
-  se_col   = c("se_mat",   "se_mat_donuts"),
-  p_col    = c("p_mat",    "p_mat_donuts"),
+  analysis = c(
+    "maternal_unadjusted",
+    "maternal_fetal_adjusted",
+    "maternal_fetal_paternal_adjusted"
+  ),
+  source = c("both", "duos", "trios"),
+  beta_col = c("beta_mat", "beta_mat_donuts", "beta_mat_donuts"),
+  se_col   = c("se_mat",   "se_mat_donuts",   "se_mat_donuts"),
+  p_col    = c("p_mat",    "p_mat_donuts",    "p_mat_donuts"),
   stringsAsFactors = FALSE
 )
 
@@ -196,7 +184,14 @@ for (i in seq_len(nrow(maternal_specs))) {
 
   spec <- maternal_specs[i, ]
 
-  tmp <- wlm_pool %>%
+  tmp <- switch(
+    spec$source,
+    both  = bind_rows(duos_raw, trios_raw),
+    duos  = duos_raw,
+    trios = trios_raw
+  )
+
+  tmp <- tmp %>%
     filter(!is.na(.data[[spec$se_col]])) %>%
     mutate(Phenotype = as.character(Phenotype))
 
@@ -219,7 +214,10 @@ for (i in seq_len(nrow(maternal_specs))) {
 
 maternal_out <- bind_rows(maternal_out_list)
 
-maternal_split <- split(maternal_out, interaction(maternal_out$outcome, maternal_out$analysis, drop = TRUE))
+maternal_split <- split(
+  maternal_out,
+  interaction(maternal_out$outcome, maternal_out$analysis, drop = TRUE)
+)
 
 maternal_res <- list()
 kk <- 1
@@ -228,13 +226,14 @@ for (e_name in names(exp_list)) {
   for (key in names(maternal_split)) {
 
     o_dat <- maternal_split[[key]]
-    o_name <- unique(o_dat$outcome)
     a_name <- unique(o_dat$analysis)
 
-    message("Maternal MR: ", e_name, " -> ", o_name, " [", a_name, "]")
+    message("Maternal MR: ", e_name, " -> ", unique(o_dat$outcome), " [", a_name, "]")
 
-    dat_h <- harmonise_data(exp_list[[e_name]], o_dat, action = 2) %>%
-      filter(mr_keep)
+    dat_h <- harmonise_data(exp_list[[e_name]], o_dat, action = 2)
+
+    if (!"mr_keep" %in% names(dat_h)) next
+    dat_h <- dat_h %>% filter(mr_keep)
 
     nsnp <- length(unique(dat_h$SNP))
     if (nsnp == 0) next
@@ -256,16 +255,6 @@ for (e_name in names(exp_list)) {
         UCI = exp(b + 1.96 * se)
       )
     kk <- kk + 1
-
-    if (nsnp >= 2) {
-      p <- mr_scatter_plot(res, dat_h)
-      ggsave(
-        filename = file.path(outdir, "plots",
-                             paste0("scatter_", a_name, "_", make.names(e_name), "_", make.names(o_name), ".png")),
-        plot = p[[1]],
-        width = 6.5, height = 5, dpi = 250
-      )
-    }
   }
 }
 
@@ -278,10 +267,6 @@ fwrite(
   quote = FALSE,
   row.names = FALSE
 )
-
-message("Finished.")
-message("Wrote: ", file.path(outdir, "mr_ma_results.tsv"))
-message("Wrote: ", file.path(outdir, "mr_maternal_results.tsv"))
 
 message("Finished.")
 message("Wrote: ", file.path(outdir, "mr_ma_results.tsv"))
