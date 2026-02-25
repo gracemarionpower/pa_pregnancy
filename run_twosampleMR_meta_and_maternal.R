@@ -118,8 +118,16 @@ for (e_name in names(exp_list)) {
 
     message("MA MR: ", e_name, " -> ", o_name)
 
-    dat_h <- harmonise_data(exp_list[[e_name]], ma_list[[o_name]], action = 2) %>%
-      filter(mr_keep)
+    dat_h <- harmonise_data(exp_list[[e_name]], ma_list[[o_name]], action = 2)
+
+    # If harmonisation returns an object without mr_keep (can happen when 0 SNPs survive
+    # or allele matching fails), skip this exposure–outcome pair cleanly
+    if (!"mr_keep" %in% names(dat_h)) {
+      message("Skipping (no mr_keep returned): ", e_name, " -> ", o_name)
+      next
+    }
+
+    dat_h <- dat_h %>% filter(mr_keep)
 
     nsnp <- length(unique(dat_h$SNP))
     if (nsnp == 0) next
