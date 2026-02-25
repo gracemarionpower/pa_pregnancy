@@ -30,18 +30,20 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------- Paths ------------------------------------------
-exposure_file <- "data/exposures/exposures_pa.txt"
-ma_outcome_file <- "data/outcomes/ma_out_dat.txt"
-duos_file <- "data/outcomes/duos_out_dat.txt"
-trios_file <- "data/outcomes/trios_out_dat.txt"
+base_dir <- "/Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG"
 
-outdir <- "results/mr_all"
+exposure_file   <- file.path(base_dir, "exposures_pa.txt")
+ma_outcome_file <- file.path(base_dir, "ma_out_dat.txt")
+duos_file       <- file.path(base_dir, "duos_out_dat.txt")
+trios_file      <- file.path(base_dir, "trios_out_dat.txt")
+
+outdir <- file.path(base_dir, "results", "mr_all")
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 dir.create(file.path(outdir, "plots"), showWarnings = FALSE, recursive = TRUE)
 
 # ----------------------------- Exposures --------------------------------------
-# The exposure file is a curated table of SNP instruments for multiple PA phenotypes.
-# Required columns: SNP, Phenotype, effect_allele, eaf, beta, se, pval
+# The exposure table is one row per SNP per PA phenotype.
+# SE is reconstructed from beta and pval if missing or if rounded to zero.
 exp_raw <- fread(exposure_file, data.table = FALSE)
 
 if (!"other_allele" %in% names(exp_raw)) exp_raw$other_allele <- NA_character_
@@ -51,8 +53,22 @@ exp_raw <- exp_raw %>%
     SNP = as.character(SNP),
     Phenotype = as.character(Phenotype),
     effect_allele = as.character(effect_allele),
-    other_allele = as.character(other_allele)
-  ) %>%
+    other_allele = as.character(other_allele),
+    beta = as.numeric(beta),
+    eaf = as.numeric(eaf),
+    pval = as.numeric(pval),
+    se = suppressWarnings(as.numeric(se))
+  )
+
+# Reconstruct SE where missing or unusable (e.g., 0.00 from rounding)
+needs_se <- is.na(exp_raw$se) | exp_raw$se <= 0
+if (any(needs_se)) {
+  z <- qnorm(1 - exp_raw$pval[needs_se] / 2)
+  exp_raw$se[needs_se] <- abs(exp_raw$beta[needs_se] / z)
+}
+
+# Drop any rows that still cannot be used
+exp_raw <- exp_raw %>%
   filter(!is.na(SNP), !is.na(Phenotype), !is.na(effect_allele),
          !is.na(beta), !is.na(se), !is.na(pval))
 
@@ -254,6 +270,10 @@ fwrite(
   quote = FALSE,
   row.names = FALSE
 )
+
+message("Finished.")
+message("Wrote: ", file.path(outdir, "mr_ma_results.tsv"))
+message("Wrote: ", file.path(outdir, "mr_maternal_results.tsv"))
 
 message("Finished.")
 message("Wrote: ", file.path(outdir, "mr_ma_results.tsv"))
