@@ -30,7 +30,7 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------- Paths ------------------------------------------
-base_dir <- "/Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG"
+base_dir <- "/projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG"
 
 exposure_file   <- file.path(base_dir, "exposures_pa.txt")
 ma_outcome_file <- file.path(base_dir, "ma_out_dat.txt")
