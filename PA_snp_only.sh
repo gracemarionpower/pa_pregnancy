@@ -30,7 +30,7 @@ PHENO_DIR="${PROJECT_ROOT}/inputs/traits_dedup"
 COVAR="${PROJECT_ROOT}/inputs/covar_age_pcs.txt"
 RSIDS="${PROJECT_ROOT}/inputs/rsids_pa.txt"
 
-OUTDIR="${PROJECT_ROOT}/results/snp_only"
+OUTDIR="${PROJECT_ROOT}/results/snp_only_v2"
 LOGDIR="${PROJECT_ROOT}/logs/snp_only"
 PRESDIR="${OUTDIR}/presence"
 
