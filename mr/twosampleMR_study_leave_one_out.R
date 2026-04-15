@@ -12,14 +12,16 @@
 #   - Study-level LOO is implemented for IVW estimates.
 #   - Egger/median/mode are still computed per study (where possible) and written
 #     out, but the LOO aggregation uses IVW as the primary estimator.
+#   - Exposure SE is reconstructed from beta and two-sided p-values where missing/0
+#   - Exposure alleles are restricted to A/C/G/T to avoid format_data() excluding rows
 #
 # Inputs:
-#   data/exposures/exposures_pa.txt
-#   data/outcomes/stu_out_dat.txt
+#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
+#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG/stu_out_dat.txt
 #
 # Outputs:
-#   results/mr_study_loo/study_level_mr.tsv
-#   results/mr_study_loo/study_loo_ivw.tsv
+#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/results/mr_study_loo/study_level_mr.tsv
+#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/results/mr_study_loo/study_loo_ivw.tsv
 ################################################################################
 
 rm(list = ls())
@@ -32,24 +34,47 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------- Paths ------------------------------------------
-exposure_file <- "data/exposures/exposures_pa.txt"
-stu_out_file  <- "data/outcomes/stu_out_dat.txt"
+base_data <- "/Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG"
 
-outdir <- "results/mr_study_loo"
+exposure_file <- file.path(base_data, "exposures_pa.txt")
+stu_out_file  <- file.path(base_data, "stu_out_dat.txt")
+
+outdir <- "/Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/results/mr_study_loo"
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
 # ----------------------------- Exposures --------------------------------------
+# SE is reconstructed from beta and pval if missing/0.
+# Exposure alleles are restricted to A/C/G/T to avoid format_data dropping rows.
 exp_raw <- fread(exposure_file, data.table = FALSE)
 
+if (!"se" %in% names(exp_raw)) exp_raw$se <- NA_real_
 if (!"other_allele" %in% names(exp_raw)) exp_raw$other_allele <- NA_character_
 
 exp_raw <- exp_raw %>%
   mutate(
     SNP = as.character(SNP),
     Phenotype = as.character(Phenotype),
-    effect_allele = as.character(effect_allele),
-    other_allele = as.character(other_allele)
-  ) %>%
+    effect_allele = toupper(as.character(effect_allele)),
+    other_allele  = toupper(as.character(other_allele)),
+    beta = as.numeric(beta),
+    se   = suppressWarnings(as.numeric(se)),
+    eaf  = as.numeric(eaf),
+    pval = as.numeric(pval)
+  )
+
+# Keep only standard single-base exposure alleles
+exp_raw <- exp_raw %>%
+  filter(effect_allele %in% c("A", "C", "G", "T"))
+
+# Reconstruct SE where missing or unusable
+needs_se <- is.na(exp_raw$se) | exp_raw$se <= 0
+if (any(needs_se)) {
+  z <- qnorm(1 - exp_raw$pval[needs_se] / 2)
+  exp_raw$se[needs_se] <- abs(exp_raw$beta[needs_se] / z)
+}
+
+# Drop unusable rows
+exp_raw <- exp_raw %>%
   filter(!is.na(SNP), !is.na(Phenotype), !is.na(effect_allele),
          !is.na(beta), !is.na(se), !is.na(pval))
 
@@ -72,8 +97,28 @@ methods <- c("mr_ivw", "mr_egger_regression", "mr_weighted_median", "mr_weighted
 
 # ----------------------------- Study-specific outcomes ------------------------
 stu_raw <- fread(stu_out_file, data.table = FALSE)
+
 stopifnot("study" %in% names(stu_raw))
 stopifnot("Phenotype" %in% names(stu_raw))
+
+# Carry study safely through format_data using row id
+stu_raw$row_id <- seq_len(nrow(stu_raw))
+
+stu_raw <- stu_raw %>%
+  mutate(
+    SNP = as.character(SNP),
+    Phenotype = as.character(Phenotype),
+    study = as.character(study),
+    effect_allele = toupper(as.character(effect_allele)),
+    other_allele  = toupper(as.character(other_allele)),
+    beta = as.numeric(beta),
+    se   = as.numeric(se),
+    eaf  = as.numeric(eaf),
+    pval = as.numeric(pval)
+  ) %>%
+  filter(!is.na(SNP), !is.na(Phenotype), !is.na(study),
+         !is.na(effect_allele), !is.na(other_allele),
+         !is.na(beta), !is.na(se), !is.na(pval))
 
 stu_out <- format_data(
   stu_raw,
@@ -88,10 +133,8 @@ stu_out <- format_data(
   phenotype_col = "Phenotype"
 )
 
-# Preserve study column and match rows by SNP + phenotype
-stu_out$study <- stu_raw$study[match(paste(stu_out$SNP, stu_out$outcome),
-                                    paste(stu_raw$SNP, stu_raw$Phenotype))]
-
+# Reattach study using row order after filtering/formatting
+stu_out$study <- stu_raw$study
 outcomes <- unique(stu_out$outcome)
 
 # ----------------------------- MR within each study ---------------------------
@@ -108,14 +151,18 @@ for (e_name in names(exp_list)) {
 
       message("Study MR: ", e_name, " -> ", o_name, " (", stu, ")")
 
-      dat_h <- harmonise_data(exp_list[[e_name]], o_by_study[[stu]], action = 2) %>%
-        filter(mr_keep)
+      dat_h <- harmonise_data(exp_list[[e_name]], o_by_study[[stu]], action = 2)
+
+      if (!"mr_keep" %in% names(dat_h)) next
+      dat_h <- dat_h %>% filter(mr_keep)
 
       nsnp <- length(unique(dat_h$SNP))
       if (nsnp == 0) next
 
       res <- tryCatch(mr(dat_h, method_list = methods), error = function(e) NULL)
-      if (is.null(res) || nrow(res) == 0) res <- tryCatch(mr(dat_h), error = function(e) NULL)
+      if (is.null(res) || nrow(res) == 0) {
+        res <- tryCatch(mr(dat_h), error = function(e) NULL)
+      }
       if (is.null(res) || nrow(res) == 0) next
 
       study_level[[k]] <- res %>%
@@ -125,7 +172,12 @@ for (e_name in names(exp_list)) {
           study = stu,
           method = method,
           nsnp = nsnp,
-          b = b, se = se, pval = pval
+          b = b,
+          se = se,
+          pval = pval,
+          OR  = exp(b),
+          LCI = exp(b - 1.96 * se),
+          UCI = exp(b + 1.96 * se)
         )
       k <- k + 1
     }
@@ -163,7 +215,11 @@ for (e_name in unique(ivw_df$exposure)) {
       dt2 <- dt %>% filter(study != drop_stu)
       if (nrow(dt2) < 1) next
 
-      fit <- metafor::rma.uni(yi = dt2$b, sei = dt2$se, method = "FE")
+      fit <- tryCatch(
+        metafor::rma.uni(yi = dt2$b, sei = dt2$se, method = "FE"),
+        error = function(e) NULL
+      )
+      if (is.null(fit)) next
 
       loo_rows[[kk]] <- data.frame(
         exposure = e_name,
