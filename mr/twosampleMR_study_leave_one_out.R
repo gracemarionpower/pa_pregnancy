@@ -1,6 +1,12 @@
 ################################################################################
 # Grace Power
 # Leave-one-study-out MR using stu_out_dat.txt
+#
+# Debug version:
+#   - prints raw-file SNP overlap
+#   - prints post-formatting object sizes
+#   - prints whether the MR loop is actually being entered
+#   - uses Wald ratio when only 1 SNP survives
 ################################################################################
 
 rm(list = ls())
@@ -51,7 +57,6 @@ exp_raw <- exp_raw %>%
     effect_allele %in% c("A", "C", "G", "T")
   )
 
-# reconstruct se if needed
 needs_se <- is.na(exp_raw$se) | exp_raw$se <= 0
 if (any(needs_se)) {
   z <- qnorm(1 - exp_raw$pval[needs_se] / 2)
@@ -61,7 +66,7 @@ if (any(needs_se)) {
 exp_raw <- exp_raw %>%
   filter(!is.na(se), se > 0)
 
-# Build exposure data manually instead of format_data()
+# Build exposure object manually
 exp_dat <- data.frame(
   SNP = exp_raw$SNP,
   beta.exposure = exp_raw$beta,
@@ -76,8 +81,6 @@ exp_dat <- data.frame(
 )
 
 exp_list <- split(exp_dat, exp_dat$exposure)
-
-methods <- c("mr_ivw", "mr_wald_ratio")
 
 # ----------------------------- Study-specific outcomes ------------------------
 stu_raw <- fread(stu_out_file, data.table = FALSE)
@@ -105,6 +108,13 @@ stu_raw <- stu_raw %>%
     other_allele %in% c("A", "C", "G", "T")
   )
 
+# ----------------------------- RAW OVERLAP CHECK ------------------------------
+cat("\n--- RAW FILE OVERLAP CHECK ---\n")
+cat("Unique exposure SNPs in raw file:", length(unique(exp_raw$SNP)), "\n")
+cat("Unique study-outcome SNPs in raw file:", length(unique(stu_raw$SNP)), "\n")
+cat("Raw-file SNP overlap:", length(intersect(unique(exp_raw$SNP), unique(stu_raw$SNP))), "\n")
+cat("--- END RAW FILE OVERLAP CHECK ---\n\n")
+
 stu_out <- format_data(
   stu_raw,
   type = "outcome",
@@ -118,7 +128,7 @@ stu_out <- format_data(
   phenotype_col = "Phenotype"
 )
 
-# reattach study by matching on SNP + phenotype + beta + se + pval
+# Reattach study by matching on SNP + phenotype + beta + se + pval
 raw_key <- paste(
   stu_raw$SNP,
   stu_raw$Phenotype,
@@ -141,6 +151,41 @@ stu_out$study <- stu_raw$study[match(fmt_key, raw_key)]
 stu_out <- stu_out %>% filter(!is.na(study))
 
 outcomes <- unique(stu_out$outcome)
+
+# ----------------------------- PRE-LOOP CHECKS -------------------------------
+cat("\n--- PRE-LOOP CHECKS ---\n")
+
+cat("nrow(exp_raw):", nrow(exp_raw), "\n")
+cat("nrow(exp_dat):", nrow(exp_dat), "\n")
+cat("length(exp_list):", length(exp_list), "\n")
+cat("Exposure names:\n")
+print(names(exp_list))
+
+cat("\n")
+cat("nrow(stu_raw):", nrow(stu_raw), "\n")
+cat("nrow(stu_out):", nrow(stu_out), "\n")
+cat("length(outcomes):", length(outcomes), "\n")
+cat("First few outcomes:\n")
+print(head(outcomes))
+
+cat("\n")
+cat("Number of non-missing study labels in stu_out:", sum(!is.na(stu_out$study)), "\n")
+cat("Unique studies in stu_out:\n")
+print(unique(stu_out$study)[1:min(10, length(unique(stu_out$study)))])
+
+cat("\n")
+cat("Example exposure SNPs:\n")
+print(head(unique(exp_dat$SNP), 10))
+
+cat("\n")
+cat("Example outcome SNPs:\n")
+print(head(unique(stu_out$SNP), 10))
+
+cat("\n")
+cat("Raw SNP overlap between exp_dat and stu_out:",
+    length(intersect(unique(exp_dat$SNP), unique(stu_out$SNP))), "\n")
+
+cat("--- END PRE-LOOP CHECKS ---\n\n")
 
 # ----------------------------- MR within each study ---------------------------
 study_level <- list()
@@ -233,21 +278,25 @@ for (e_name in names(exp_list)) {
 }
 
 study_level_df <- bind_rows(study_level)
-if (nrow(study_level_df) == 0) {
-  message("No study-level MR results were generated.")
-  quit(save = "no")
-}
 
+cat("\nFinal study_level_df dim:\n")
 print(dim(study_level_df))
 print(head(study_level_df))
 
-# ----------------------------- Leave-one-study-out ----------------------------
 if (nrow(study_level_df) == 0) {
   message("No study-level MR results were generated.")
-  fwrite(data.frame(), file = file.path(outdir, "study_loo_ivw.tsv"), sep = "\t")
   quit(save = "no")
 }
 
+fwrite(
+  study_level_df,
+  file = file.path(outdir, "study_level_mr.tsv"),
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+# ----------------------------- Leave-one-study-out ----------------------------
 ivw_df <- study_level_df %>%
   filter(method == "Inverse variance weighted") %>%
   filter(!is.na(b), !is.na(se))
