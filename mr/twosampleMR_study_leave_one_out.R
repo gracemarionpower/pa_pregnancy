@@ -77,7 +77,7 @@ exp_dat <- data.frame(
 
 exp_list <- split(exp_dat, exp_dat$exposure)
 
-methods <- c("mr_ivw", "mr_egger_regression", "mr_weighted_median", "mr_weighted_mode")
+methods <- c("mr_ivw", "mr_wald_ratio")
 
 # ----------------------------- Study-specific outcomes ------------------------
 stu_raw <- fread(stu_out_file, data.table = FALSE)
@@ -154,25 +154,64 @@ for (e_name in names(exp_list)) {
 
     for (stu in names(o_by_study)) {
 
+      message("--------------------------------------------------")
       message("Study MR: ", e_name, " -> ", o_name, " (", stu, ")")
 
+      e_dat <- exp_list[[e_name]]
+      o_dat <- o_by_study[[stu]]
+
+      message("Exposure SNPs: ", length(unique(e_dat$SNP)))
+      message("Outcome SNPs: ", length(unique(o_dat$SNP)))
+      message("Raw overlap: ", length(intersect(e_dat$SNP, o_dat$SNP)))
+
       dat_h <- tryCatch(
-        harmonise_data(exp_list[[e_name]], o_by_study[[stu]], action = 2),
-        error = function(e) NULL
+        harmonise_data(e_dat, o_dat, action = 2),
+        error = function(e) {
+          message("harmonise_data error: ", e$message)
+          NULL
+        }
       )
+
       if (is.null(dat_h)) next
-      if (!"mr_keep" %in% names(dat_h)) next
+
+      message("Rows after harmonise_data: ", nrow(dat_h))
+
+      if (!"mr_keep" %in% names(dat_h)) {
+        message("No mr_keep column returned")
+        next
+      }
+
+      message("Rows with mr_keep == TRUE: ", sum(dat_h$mr_keep, na.rm = TRUE))
 
       dat_h <- dat_h %>% filter(mr_keep)
 
       nsnp <- length(unique(dat_h$SNP))
+      message("Unique SNPs after harmonisation: ", nsnp)
+
       if (nsnp == 0) next
 
-      res <- tryCatch(mr(dat_h, method_list = methods), error = function(e) NULL)
-      if (is.null(res) || nrow(res) == 0) {
-        res <- tryCatch(mr(dat_h), error = function(e) NULL)
+      if (nsnp == 1) {
+        res <- tryCatch(
+          mr(dat_h, method_list = "mr_wald_ratio"),
+          error = function(e) {
+            message("mr_wald_ratio error: ", e$message)
+            NULL
+          }
+        )
+      } else {
+        res <- tryCatch(
+          mr(dat_h, method_list = c("mr_ivw", "mr_wald_ratio")),
+          error = function(e) {
+            message("mr() error: ", e$message)
+            NULL
+          }
+        )
       }
-      if (is.null(res) || nrow(res) == 0) next
+
+      if (is.null(res) || nrow(res) == 0) {
+        message("No MR results returned")
+        next
+      }
 
       study_level[[k]] <- res %>%
         transmute(
@@ -192,16 +231,6 @@ for (e_name in names(exp_list)) {
     }
   }
 }
-
-study_level_df <- bind_rows(study_level)
-
-fwrite(
-  study_level_df,
-  file = file.path(outdir, "study_level_mr.tsv"),
-  sep = "\t",
-  quote = FALSE,
-  row.names = FALSE
-)
 
 # ----------------------------- Leave-one-study-out ----------------------------
 if (nrow(study_level_df) == 0) {
