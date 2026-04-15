@@ -1,6 +1,6 @@
 ################################################################################
 # Grace Power
-# 25 Feb 2026
+# 15 Apr 2026
 # Leave-one-study-out MR using stu_out_dat.txt
 #
 # Rationale:
@@ -16,12 +16,12 @@
 #   - Exposure alleles are restricted to A/C/G/T to avoid format_data() excluding rows
 #
 # Inputs:
-#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
-#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG/stu_out_dat.txt
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/stu_out_dat.txt
 #
 # Outputs:
-#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/results/mr_study_loo/study_level_mr.tsv
-#   /Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/results/mr_study_loo/study_loo_ivw.tsv
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr_study_loo/study_level_mr.tsv
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr_study_loo/study_loo_ivw.tsv
 ################################################################################
 
 rm(list = ls())
@@ -34,15 +34,23 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------- Paths ------------------------------------------
-base_data <- "/Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/data/MR-PREG"
+base_dir  <- "/projects/MRC-IEU/research/projects/ieu3/p5/017"
+base_data <- file.path(base_dir, "working/data/MR-PREG")
 
 exposure_file <- file.path(base_data, "exposures_pa.txt")
 stu_out_file  <- file.path(base_data, "stu_out_dat.txt")
 
-outdir <- "/Volumes/MRC-IEU-research/projects/ieu3/p5/017/working/results/mr_study_loo"
+outdir <- file.path(base_dir, "working/results/mr_study_loo")
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
+# Optional path checks
+cat("Exposure file:", exposure_file, "\n")
+cat("Exists:", file.exists(exposure_file), "\n")
+cat("Study outcome file:", stu_out_file, "\n")
+cat("Exists:", file.exists(stu_out_file), "\n")
+
 # ----------------------------- Exposures --------------------------------------
+# One row per SNP per PA phenotype.
 # SE is reconstructed from beta and pval if missing/0.
 # Exposure alleles are restricted to A/C/G/T to avoid format_data dropping rows.
 exp_raw <- fread(exposure_file, data.table = FALSE)
@@ -62,7 +70,7 @@ exp_raw <- exp_raw %>%
     pval = as.numeric(pval)
   )
 
-# Keep only standard single-base exposure alleles
+# Keep only standard single-base alleles for exposure coding
 exp_raw <- exp_raw %>%
   filter(effect_allele %in% c("A", "C", "G", "T"))
 
@@ -73,7 +81,7 @@ if (any(needs_se)) {
   exp_raw$se[needs_se] <- abs(exp_raw$beta[needs_se] / z)
 }
 
-# Drop unusable rows
+# Drop any rows still unusable
 exp_raw <- exp_raw %>%
   filter(!is.na(SNP), !is.na(Phenotype), !is.na(effect_allele),
          !is.na(beta), !is.na(se), !is.na(pval))
@@ -100,9 +108,6 @@ stu_raw <- fread(stu_out_file, data.table = FALSE)
 
 stopifnot("study" %in% names(stu_raw))
 stopifnot("Phenotype" %in% names(stu_raw))
-
-# Carry study safely through format_data using row id
-stu_raw$row_id <- seq_len(nrow(stu_raw))
 
 stu_raw <- stu_raw %>%
   mutate(
@@ -133,8 +138,9 @@ stu_out <- format_data(
   phenotype_col = "Phenotype"
 )
 
-# Reattach study using row order after filtering/formatting
+# Carry study column through in the same filtered order
 stu_out$study <- stu_raw$study
+
 outcomes <- unique(stu_out$outcome)
 
 # ----------------------------- MR within each study ---------------------------
