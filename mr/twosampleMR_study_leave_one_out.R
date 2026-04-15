@@ -1,8 +1,29 @@
 ################################################################################
 # Grace Power
+# 15 Apr 2026
 # Leave-one-study-out MR using stu_out_dat.txt
 #
-# Manual exposure + manual outcome formatting version
+# Rationale:
+#   The study-specific outcome file is used to estimate MR separately within each
+#   study. I then carry out leave-one-study-out by recomputing a fixed-effect
+#   meta-analysis of the remaining study-specific MR estimates.
+#
+# Notes:
+#   - Study-level LOO is implemented for IVW estimates.
+#   - Egger/median/mode are still computed per study (where possible) and written
+#     out, but the LOO aggregation uses IVW as the primary estimator.
+#   - Exposure SE is reconstructed from beta and two-sided p-values where missing/0
+#   - Exposure file has only effect_allele, so exposure data are built manually
+#   - Outcome data are also built manually because format_data() was dropping all rows
+#   - Wald ratio is used when only 1 SNP survives harmonisation
+#
+# Inputs:
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/stu_out_dat.txt
+#
+# Outputs:
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr_study_loo/study_level_mr.tsv
+#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr_study_loo/study_loo_ivw.tsv
 ################################################################################
 
 rm(list = ls())
