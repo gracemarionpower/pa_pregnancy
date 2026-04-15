@@ -1,28 +1,6 @@
 ################################################################################
 # Grace Power
-# 15 Feb 2026
 # Leave-one-study-out MR using stu_out_dat.txt
-#
-# Rationale:
-#   The study-specific outcome file is used to estimate MR separately within each
-#   study. I then carry out leave-one-study-out by recomputing a fixed-effect
-#   meta-analysis of the remaining study-specific MR estimates.
-#
-# Notes:
-#   - Study-level LOO is implemented for IVW estimates.
-#   - Egger/median/mode are still computed per study (where possible) and written
-#     out, but the LOO aggregation uses IVW as the primary estimator.
-#   - Exposure SE is reconstructed from beta and two-sided p-values where missing/0
-#   - Exposure alleles are restricted to A/C/G/T to avoid format_data() excluding rows
-#   - Exposure other_allele is set to NA to match the working main MR script
-#
-# Inputs:
-#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
-#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/stu_out_dat.txt
-#
-# Outputs:
-#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr_study_loo/study_level_mr.tsv
-#   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/results/mr_study_loo/study_loo_ivw.tsv
 ################################################################################
 
 rm(list = ls())
@@ -50,10 +28,6 @@ cat("Study outcome file:", stu_out_file, "\n")
 cat("Exists:", file.exists(stu_out_file), "\n")
 
 # ----------------------------- Exposures --------------------------------------
-# One row per SNP per PA phenotype.
-# SE is reconstructed from beta and pval if missing/0.
-# Exposure alleles are restricted to A/C/G/T.
-# Exposure other_allele is set to NA to avoid format_data dropping rows.
 exp_raw <- fread(exposure_file, data.table = FALSE)
 
 if (!"se" %in% names(exp_raw)) exp_raw$se <- NA_real_
@@ -64,41 +38,41 @@ exp_raw <- exp_raw %>%
     Phenotype = as.character(Phenotype),
     effect_allele = toupper(as.character(effect_allele)),
     beta = as.numeric(beta),
+    se   = as.numeric(se),
     eaf  = as.numeric(eaf),
-    pval = as.numeric(pval),
-    se   = suppressWarnings(as.numeric(se))
+    pval = as.numeric(pval)
+  ) %>%
+  filter(
+    !is.na(SNP),
+    !is.na(Phenotype),
+    !is.na(effect_allele),
+    !is.na(beta),
+    !is.na(pval),
+    effect_allele %in% c("A", "C", "G", "T")
   )
 
-# Keep only standard single-base alleles for exposure coding
-exp_raw <- exp_raw %>%
-  filter(effect_allele %in% c("A", "C", "G", "T"))
-
-# Reconstruct SE where missing or unusable
+# reconstruct se if needed
 needs_se <- is.na(exp_raw$se) | exp_raw$se <= 0
 if (any(needs_se)) {
   z <- qnorm(1 - exp_raw$pval[needs_se] / 2)
   exp_raw$se[needs_se] <- abs(exp_raw$beta[needs_se] / z)
 }
 
-# Drop unusable rows
 exp_raw <- exp_raw %>%
-  filter(!is.na(SNP), !is.na(Phenotype), !is.na(effect_allele),
-         !is.na(beta), !is.na(se), !is.na(pval))
+  filter(!is.na(se), se > 0)
 
-# IMPORTANT: blank other_allele on exposure side, as in your working script
-exp_raw$other_allele <- NA_character_
-
-exp_dat <- format_data(
-  exp_raw,
-  type = "exposure",
-  snp_col = "SNP",
-  beta_col = "beta",
-  se_col = "se",
-  eaf_col = "eaf",
-  effect_allele_col = "effect_allele",
-  other_allele_col = "other_allele",
-  pval_col = "pval",
-  phenotype_col = "Phenotype"
+# Build exposure data manually instead of format_data()
+exp_dat <- data.frame(
+  SNP = exp_raw$SNP,
+  beta.exposure = exp_raw$beta,
+  se.exposure = exp_raw$se,
+  pval.exposure = exp_raw$pval,
+  eaf.exposure = exp_raw$eaf,
+  effect_allele.exposure = exp_raw$effect_allele,
+  other_allele.exposure = NA_character_,
+  exposure = exp_raw$Phenotype,
+  id.exposure = exp_raw$Phenotype,
+  stringsAsFactors = FALSE
 )
 
 exp_list <- split(exp_dat, exp_dat$exposure)
@@ -113,7 +87,6 @@ stopifnot("Phenotype" %in% names(stu_raw))
 
 stu_raw <- stu_raw %>%
   mutate(
-    row_id = seq_len(n()),
     SNP = as.character(SNP),
     Phenotype = as.character(Phenotype),
     study = as.character(study),
@@ -124,17 +97,12 @@ stu_raw <- stu_raw %>%
     eaf  = as.numeric(eaf),
     pval = as.numeric(pval)
   ) %>%
-  filter(!is.na(SNP), !is.na(Phenotype), !is.na(study),
-         !is.na(effect_allele), !is.na(other_allele),
-         !is.na(beta), !is.na(se), !is.na(pval))
-
-# Keep only rows with alleles format_data can use
-stu_raw <- stu_raw %>%
   filter(
-    effect_allele %in% c("A","C","G","T","D","I") |
-      grepl("^[ACGT]+$", effect_allele),
-    other_allele %in% c("A","C","G","T","D","I") |
-      grepl("^[ACGT]+$", other_allele)
+    !is.na(SNP), !is.na(Phenotype), !is.na(study),
+    !is.na(effect_allele), !is.na(other_allele),
+    !is.na(beta), !is.na(se), !is.na(pval),
+    effect_allele %in% c("A", "C", "G", "T"),
+    other_allele %in% c("A", "C", "G", "T")
   )
 
 stu_out <- format_data(
@@ -150,9 +118,8 @@ stu_out <- format_data(
   phenotype_col = "Phenotype"
 )
 
-# Reattach study by matching retained formatted rows back to source rows
-# using SNP + phenotype + beta + se + pval
-stu_key_raw <- paste(
+# reattach study by matching on SNP + phenotype + beta + se + pval
+raw_key <- paste(
   stu_raw$SNP,
   stu_raw$Phenotype,
   signif(stu_raw$beta, 12),
@@ -161,7 +128,7 @@ stu_key_raw <- paste(
   sep = "||"
 )
 
-stu_key_fmt <- paste(
+fmt_key <- paste(
   stu_out$SNP,
   stu_out$outcome,
   signif(stu_out$beta.outcome, 12),
@@ -170,10 +137,7 @@ stu_key_fmt <- paste(
   sep = "||"
 )
 
-m <- match(stu_key_fmt, stu_key_raw)
-stu_out$study <- stu_raw$study[m]
-
-# Drop any rows where study could not be recovered
+stu_out$study <- stu_raw$study[match(fmt_key, raw_key)]
 stu_out <- stu_out %>% filter(!is.na(study))
 
 outcomes <- unique(stu_out$outcome)
@@ -192,9 +156,13 @@ for (e_name in names(exp_list)) {
 
       message("Study MR: ", e_name, " -> ", o_name, " (", stu, ")")
 
-      dat_h <- harmonise_data(exp_list[[e_name]], o_by_study[[stu]], action = 2)
-
+      dat_h <- tryCatch(
+        harmonise_data(exp_list[[e_name]], o_by_study[[stu]], action = 2),
+        error = function(e) NULL
+      )
+      if (is.null(dat_h)) next
       if (!"mr_keep" %in% names(dat_h)) next
+
       dat_h <- dat_h %>% filter(mr_keep)
 
       nsnp <- length(unique(dat_h$SNP))
@@ -235,7 +203,13 @@ fwrite(
   row.names = FALSE
 )
 
-# ----------------------------- Leave-one-study-out (IVW FE meta) --------------
+# ----------------------------- Leave-one-study-out ----------------------------
+if (nrow(study_level_df) == 0) {
+  message("No study-level MR results were generated.")
+  fwrite(data.frame(), file = file.path(outdir, "study_loo_ivw.tsv"), sep = "\t")
+  quit(save = "no")
+}
+
 ivw_df <- study_level_df %>%
   filter(method == "Inverse variance weighted") %>%
   filter(!is.na(b), !is.na(se))
@@ -252,7 +226,6 @@ for (e_name in unique(ivw_df$exposure)) {
     studies <- unique(dt$study)
 
     for (drop_stu in studies) {
-
       dt2 <- dt %>% filter(study != drop_stu)
       if (nrow(dt2) < 1) next
 
