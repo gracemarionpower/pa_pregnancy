@@ -232,6 +232,11 @@ for (e_name in names(exp_list)) {
   }
 }
 
+study_level_df <- bind_rows(study_level)
+
+print(dim(study_level_df))
+print(head(study_level_df))
+
 # ----------------------------- Leave-one-study-out ----------------------------
 if (nrow(study_level_df) == 0) {
   message("No study-level MR results were generated.")
