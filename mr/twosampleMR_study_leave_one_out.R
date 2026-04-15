@@ -2,11 +2,7 @@
 # Grace Power
 # Leave-one-study-out MR using stu_out_dat.txt
 #
-# Debug version:
-#   - prints raw-file SNP overlap
-#   - prints post-formatting object sizes
-#   - prints whether the MR loop is actually being entered
-#   - uses Wald ratio when only 1 SNP survives
+# Manual exposure + manual outcome formatting version
 ################################################################################
 
 rm(list = ls())
@@ -66,7 +62,7 @@ if (any(needs_se)) {
 exp_raw <- exp_raw %>%
   filter(!is.na(se), se > 0)
 
-# Build exposure object manually
+# manual exposure object
 exp_dat <- data.frame(
   SNP = exp_raw$SNP,
   beta.exposure = exp_raw$beta,
@@ -101,60 +97,44 @@ stu_raw <- stu_raw %>%
     pval = as.numeric(pval)
   ) %>%
   filter(
-    !is.na(SNP), !is.na(Phenotype), !is.na(study),
-    !is.na(effect_allele), !is.na(other_allele),
-    !is.na(beta), !is.na(se), !is.na(pval),
+    !is.na(SNP),
+    !is.na(Phenotype),
+    !is.na(study),
+    !is.na(effect_allele),
+    !is.na(other_allele),
+    !is.na(beta),
+    !is.na(se),
+    !is.na(pval),
+    se > 0,
     effect_allele %in% c("A", "C", "G", "T"),
     other_allele %in% c("A", "C", "G", "T")
   )
 
-# ----------------------------- RAW OVERLAP CHECK ------------------------------
+# manual outcome object
+stu_out <- data.frame(
+  SNP = stu_raw$SNP,
+  beta.outcome = stu_raw$beta,
+  se.outcome = stu_raw$se,
+  pval.outcome = stu_raw$pval,
+  eaf.outcome = stu_raw$eaf,
+  effect_allele.outcome = stu_raw$effect_allele,
+  other_allele.outcome = stu_raw$other_allele,
+  outcome = stu_raw$Phenotype,
+  id.outcome = stu_raw$Phenotype,
+  study = stu_raw$study,
+  stringsAsFactors = FALSE
+)
+
+outcomes <- unique(stu_out$outcome)
+
+# ----------------------------- Debug checks -----------------------------------
 cat("\n--- RAW FILE OVERLAP CHECK ---\n")
 cat("Unique exposure SNPs in raw file:", length(unique(exp_raw$SNP)), "\n")
 cat("Unique study-outcome SNPs in raw file:", length(unique(stu_raw$SNP)), "\n")
 cat("Raw-file SNP overlap:", length(intersect(unique(exp_raw$SNP), unique(stu_raw$SNP))), "\n")
 cat("--- END RAW FILE OVERLAP CHECK ---\n\n")
 
-stu_out <- format_data(
-  stu_raw,
-  type = "outcome",
-  snp_col = "SNP",
-  beta_col = "beta",
-  se_col = "se",
-  eaf_col = "eaf",
-  effect_allele_col = "effect_allele",
-  other_allele_col = "other_allele",
-  pval_col = "pval",
-  phenotype_col = "Phenotype"
-)
-
-# Reattach study by matching on SNP + phenotype + beta + se + pval
-raw_key <- paste(
-  stu_raw$SNP,
-  stu_raw$Phenotype,
-  signif(stu_raw$beta, 12),
-  signif(stu_raw$se, 12),
-  signif(stu_raw$pval, 12),
-  sep = "||"
-)
-
-fmt_key <- paste(
-  stu_out$SNP,
-  stu_out$outcome,
-  signif(stu_out$beta.outcome, 12),
-  signif(stu_out$se.outcome, 12),
-  signif(stu_out$pval.outcome, 12),
-  sep = "||"
-)
-
-stu_out$study <- stu_raw$study[match(fmt_key, raw_key)]
-stu_out <- stu_out %>% filter(!is.na(study))
-
-outcomes <- unique(stu_out$outcome)
-
-# ----------------------------- PRE-LOOP CHECKS -------------------------------
 cat("\n--- PRE-LOOP CHECKS ---\n")
-
 cat("nrow(exp_raw):", nrow(exp_raw), "\n")
 cat("nrow(exp_dat):", nrow(exp_dat), "\n")
 cat("length(exp_list):", length(exp_list), "\n")
@@ -184,7 +164,6 @@ print(head(unique(stu_out$SNP), 10))
 cat("\n")
 cat("Raw SNP overlap between exp_dat and stu_out:",
     length(intersect(unique(exp_dat$SNP), unique(stu_out$SNP))), "\n")
-
 cat("--- END PRE-LOOP CHECKS ---\n\n")
 
 # ----------------------------- MR within each study ---------------------------
@@ -218,14 +197,9 @@ for (e_name in names(exp_list)) {
       )
 
       if (is.null(dat_h)) next
+      if (!"mr_keep" %in% names(dat_h)) next
 
       message("Rows after harmonise_data: ", nrow(dat_h))
-
-      if (!"mr_keep" %in% names(dat_h)) {
-        message("No mr_keep column returned")
-        next
-      }
-
       message("Rows with mr_keep == TRUE: ", sum(dat_h$mr_keep, na.rm = TRUE))
 
       dat_h <- dat_h %>% filter(mr_keep)
