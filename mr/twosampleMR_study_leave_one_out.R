@@ -1,6 +1,6 @@
 ################################################################################
 # Grace Power
-# 15 Apr 2026
+# 15 Feb 2026
 # Leave-one-study-out MR using stu_out_dat.txt
 #
 # Rationale:
@@ -14,6 +14,7 @@
 #     out, but the LOO aggregation uses IVW as the primary estimator.
 #   - Exposure SE is reconstructed from beta and two-sided p-values where missing/0
 #   - Exposure alleles are restricted to A/C/G/T to avoid format_data() excluding rows
+#   - Exposure other_allele is set to NA to match the working main MR script
 #
 # Inputs:
 #   /projects/MRC-IEU/research/projects/ieu3/p5/017/working/data/MR-PREG/exposures_pa.txt
@@ -43,7 +44,6 @@ stu_out_file  <- file.path(base_data, "stu_out_dat.txt")
 outdir <- file.path(base_dir, "working/results/mr_study_loo")
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
-# Optional path checks
 cat("Exposure file:", exposure_file, "\n")
 cat("Exists:", file.exists(exposure_file), "\n")
 cat("Study outcome file:", stu_out_file, "\n")
@@ -52,22 +52,21 @@ cat("Exists:", file.exists(stu_out_file), "\n")
 # ----------------------------- Exposures --------------------------------------
 # One row per SNP per PA phenotype.
 # SE is reconstructed from beta and pval if missing/0.
-# Exposure alleles are restricted to A/C/G/T to avoid format_data dropping rows.
+# Exposure alleles are restricted to A/C/G/T.
+# Exposure other_allele is set to NA to avoid format_data dropping rows.
 exp_raw <- fread(exposure_file, data.table = FALSE)
 
 if (!"se" %in% names(exp_raw)) exp_raw$se <- NA_real_
-if (!"other_allele" %in% names(exp_raw)) exp_raw$other_allele <- NA_character_
 
 exp_raw <- exp_raw %>%
   mutate(
     SNP = as.character(SNP),
     Phenotype = as.character(Phenotype),
     effect_allele = toupper(as.character(effect_allele)),
-    other_allele  = toupper(as.character(other_allele)),
     beta = as.numeric(beta),
-    se   = suppressWarnings(as.numeric(se)),
     eaf  = as.numeric(eaf),
-    pval = as.numeric(pval)
+    pval = as.numeric(pval),
+    se   = suppressWarnings(as.numeric(se))
   )
 
 # Keep only standard single-base alleles for exposure coding
@@ -81,10 +80,13 @@ if (any(needs_se)) {
   exp_raw$se[needs_se] <- abs(exp_raw$beta[needs_se] / z)
 }
 
-# Drop any rows still unusable
+# Drop unusable rows
 exp_raw <- exp_raw %>%
   filter(!is.na(SNP), !is.na(Phenotype), !is.na(effect_allele),
          !is.na(beta), !is.na(se), !is.na(pval))
+
+# IMPORTANT: blank other_allele on exposure side, as in your working script
+exp_raw$other_allele <- NA_character_
 
 exp_dat <- format_data(
   exp_raw,
@@ -111,6 +113,7 @@ stopifnot("Phenotype" %in% names(stu_raw))
 
 stu_raw <- stu_raw %>%
   mutate(
+    row_id = seq_len(n()),
     SNP = as.character(SNP),
     Phenotype = as.character(Phenotype),
     study = as.character(study),
@@ -125,6 +128,15 @@ stu_raw <- stu_raw %>%
          !is.na(effect_allele), !is.na(other_allele),
          !is.na(beta), !is.na(se), !is.na(pval))
 
+# Keep only rows with alleles format_data can use
+stu_raw <- stu_raw %>%
+  filter(
+    effect_allele %in% c("A","C","G","T","D","I") |
+      grepl("^[ACGT]+$", effect_allele),
+    other_allele %in% c("A","C","G","T","D","I") |
+      grepl("^[ACGT]+$", other_allele)
+  )
+
 stu_out <- format_data(
   stu_raw,
   type = "outcome",
@@ -138,8 +150,31 @@ stu_out <- format_data(
   phenotype_col = "Phenotype"
 )
 
-# Carry study column through in the same filtered order
-stu_out$study <- stu_raw$study
+# Reattach study by matching retained formatted rows back to source rows
+# using SNP + phenotype + beta + se + pval
+stu_key_raw <- paste(
+  stu_raw$SNP,
+  stu_raw$Phenotype,
+  signif(stu_raw$beta, 12),
+  signif(stu_raw$se, 12),
+  signif(stu_raw$pval, 12),
+  sep = "||"
+)
+
+stu_key_fmt <- paste(
+  stu_out$SNP,
+  stu_out$outcome,
+  signif(stu_out$beta.outcome, 12),
+  signif(stu_out$se.outcome, 12),
+  signif(stu_out$pval.outcome, 12),
+  sep = "||"
+)
+
+m <- match(stu_key_fmt, stu_key_raw)
+stu_out$study <- stu_raw$study[m]
+
+# Drop any rows where study could not be recovered
+stu_out <- stu_out %>% filter(!is.na(study))
 
 outcomes <- unique(stu_out$outcome)
 
