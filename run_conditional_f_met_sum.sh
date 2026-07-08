@@ -35,7 +35,6 @@ RSCRIPT="${OUTDIR}/conditional_f_MET.R"
 
 mkdir -p "$OUTDIR" "$DOSAGEDIR" "$SNPDIR" "${PROJECT_ROOT}/logs"
 
-# Checks
 [[ -x "$PLINK2" ]] || { echo "ERROR: plink2 not executable: $PLINK2"; exit 1; }
 [[ -f "$SAMPLE" ]] || { echo "ERROR: sample file missing: $SAMPLE"; exit 1; }
 [[ -f "$PHENO" ]] || { echo "ERROR: phenotype file missing: $PHENO"; exit 1; }
@@ -45,7 +44,6 @@ echo "Phenotype: $PHENO"
 echo "Covariates: $COVAR"
 echo "Output directory: $OUTDIR"
 
-# SNP sets used in final MR analyses
 cat > "${SNPDIR}/MVPA_leisure.txt" <<EOF
 rs1160545
 rs7613360
@@ -75,7 +73,6 @@ rs1858242
 rs34858520
 EOF
 
-# Export ALSPAC dosages for each instrument set
 for INSTRUMENT in MVPA_leisure Vigorous_PA Total_log_acceleration Sedentary_time; do
   RSIDS="${SNPDIR}/${INSTRUMENT}.txt"
 
@@ -100,7 +97,6 @@ for INSTRUMENT in MVPA_leisure Vigorous_PA Total_log_acceleration Sedentary_time
   done
 done
 
-# Write R script to calculate conditional F
 cat > "$RSCRIPT" <<'EOF'
 suppressPackageStartupMessages({
   library(data.table)
@@ -114,18 +110,18 @@ pheno_file <- args[2]
 covar_file <- args[3]
 outfile <- args[4]
 
-pheno <- fread(pheno_file, data.table = FALSE)
-covar <- fread(covar_file, data.table = FALSE)
+pheno <- fread(pheno_file, data.table = FALSE, header = FALSE)
+covar <- fread(covar_file, data.table = FALSE, header = FALSE)
 
-names(pheno)[1:2] <- c("FID", "IID")
-names(covar)[1:2] <- c("FID", "IID")
-
-trait_col <- names(pheno)[3]
-covar_cols <- names(covar)[3:ncol(covar)]
+names(pheno) <- c("FID", "IID", "trait")
+names(covar) <- c("FID", "IID", "age", paste0("PC", 1:10))
 
 base_dat <- pheno %>%
-  select(FID, IID, trait = all_of(trait_col)) %>%
+  mutate(trait = as.numeric(trait)) %>%
+  filter(!is.na(trait), trait != -9) %>%
   left_join(covar, by = c("FID", "IID"))
+
+covar_cols <- c("age", paste0("PC", 1:10))
 
 instruments <- c(
   "MVPA_leisure",
@@ -189,6 +185,11 @@ for (instrument in instruments) {
   model_dat <- model_dat %>%
     mutate(across(everything(), as.numeric)) %>%
     filter(complete.cases(.))
+
+  if (nrow(model_dat) == 0) {
+    warning("No complete cases for ", instrument)
+    next
+  }
 
   reduced_formula <- as.formula(
     paste(trait_name, "~", paste(covar_names, collapse = " + "))
