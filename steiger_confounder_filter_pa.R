@@ -18,12 +18,11 @@ bmd_file <- file.path(ldsc_dir, "GCST005348.sumstats_bmd.withN.tsv")
 
 # Add exposure GWAS sample sizes here
 exposure_N <- tibble::tribble(
-  ~Study, ~N_exposure,
-  "Wang", NA_real_,
-  "Klimentidis", NA_real_,
-  "Qi", NA_real_,
-  "Doherty", NA_real_,
-  "Schoeler", NA_real_
+  ~Phenotype, ~N_exposure,
+  "MVPA_leisure", 606820,
+  "Vigorous_PA", 261055,
+  "Sedentary_time", 91105,
+  "Total_log_acceleration", 88411
 )
 
 calc_r2 <- function(beta, se, eaf, n) {
