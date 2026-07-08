@@ -70,7 +70,7 @@ exp_dat <- exp_raw %>%
     pval_exposure = as.numeric(pval),
     eaf_exposure = as.numeric(eaf)
   ) %>%
-  left_join(exposure_N, by = "Study") %>%
+  left_join(exposure_N, by = "Phenotype") %>%
   filter(
     Phenotype %in% c(
       "MVPA_leisure",
